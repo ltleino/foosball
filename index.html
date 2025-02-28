@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fair Foosball Draw - With Privileged & Split Option</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+      background-color: #f2f2f2;
+    }
+    .layer {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.95);
+      z-index: 10;
+    }
+    /* Registration layer */
+    #registrationLayer input[type="number"] {
+      font-size: 24px;
+      padding: 5px;
+      width: 80px;
+      text-align: center;
+      margin: 5px;
+    }
+    #registrationLayer label {
+      font-size: 24px;
+      margin: 5px;
+    }
+    #registrationLayer button, #splitToggle {
+      font-size: 36px;
+      padding: 10px 20px;
+      margin-top: 20px;
+      cursor: pointer;
+    }
+    /* Participation layer */
+    #participationLayer {
+      font-size: 32px;
+      cursor: pointer;
+    }
+    #participationLayer label {
+      font-size: 24px;
+      margin-top: 10px;
+    }
+    /* Results container */
+    #resultsLayer {
+      position: relative;
+      padding-top: 20px;
+    }
+    .card {
+      display: inline-block;
+      width: 120px;
+      height: 120px;
+      line-height: 120px;
+      margin: 10px;
+      font-size: 48px;
+      color: white;
+      border-radius: 10px;
+      border: 2px solid #000;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+  <!-- Registration Layer -->
+  <div id="registrationLayer" class="layer">
+    <h1>Mahtava Uusi Nuorekas Arvonta!</h1>
+    <label>
+      <div>Paljos pannaan?</div>
+      <input id="participantCount" type="number" min="4" value="4">
+    </label>
+    <br>
+    <label>
+      <div>Privit (0-3)</div>
+      <input id="privilegedCount" type="number" min="0" max="3" value="0">
+    </label>
+    <br>
+    <!-- Toggle button replacing the checkbox -->
+    <button id="splitToggle" data-active="false" style="background-color:initial;">
+      Splittaa eka pari
+    </button>
+    <br>
+    <button id="startButton">🔥</button>
+  </div>
+
+  <!-- Participation Layer -->
+  <div id="participationLayer" class="layer" style="display: none;">
+    <h1 id="participationText">Tap tap tap...</h1>
+  </div>
+
+  <!-- Results Layer -->
+  <div id="resultsLayer"></div>
+
+  <script>
+    (function(){
+      'use strict';
+
+      // Define the four playing outcomes.
+      var outcomes = [
+        { icon: '🛡️', color: 'blue' },  // Blue Shield
+        { icon: '🗡️', color: 'blue' },  // Blue Sword
+        { icon: '🛡️', color: 'red' },   // Red Shield
+        { icon: '🗡️', color: 'red' }    // Red Sword
+      ];
+
+      // Outcome for participants not chosen to play.
+      var excludedOutcome = { icon: '🖕', color: 'gray' };
+
+      // Fisher–Yates shuffle for an unbiased random shuffle.
+      function shuffle(array) {
+        var currentIndex = array.length, temporaryValue, randomIndex;
+        while (currentIndex !== 0) {
+          randomIndex = Math.floor(Math.random() * currentIndex);
+          currentIndex -= 1;
+          temporaryValue = array[currentIndex];
+          array[currentIndex] = array[randomIndex];
+          array[randomIndex] = temporaryValue;
+        }
+        return array;
+      }
+
+      // Returns a random outcome with the opposite color.
+      function getOppositeOutcome(currentOutcome) {
+        var possible = outcomes.filter(function(o) {
+          return o.color !== currentOutcome.color;
+        });
+        return possible[Math.floor(Math.random() * possible.length)];
+      }
+
+      // Global variables.
+      var totalParticipants = 0;
+      var privilegedCount = 0;
+      var resultsArray = [];      // Pre-drawn result for each participant slot.
+      var availableIndices = [];  // Indices of participant slots not yet claimed.
+      var privilegedIndices = []; // Indices designated as privileged.
+      var currentClick = 0;       // Total number of clicks
+      var privilegedDrawCount = 0; // Count of privileged draws so far
+      var firstPrivilegedOutcome = null; // To store outcome of first privileged player
+
+      // DOM elements.
+      var registrationLayer = document.getElementById('registrationLayer');
+      var participantInput = document.getElementById('participantCount');
+      var privilegedInput = document.getElementById('privilegedCount');
+      var splitToggle = document.getElementById('splitToggle');
+      var startButton = document.getElementById('startButton');
+      var participationLayer = document.getElementById('participationLayer');
+      var participationText = document.getElementById('participationText');
+      var resultsLayer = document.getElementById('resultsLayer');
+
+      // Toggle button event: toggle state and update privileged input and button style.
+      splitToggle.addEventListener('click', function(){
+        var isActive = splitToggle.getAttribute('data-active') === 'true';
+        isActive = !isActive;
+        splitToggle.setAttribute('data-active', isActive);
+        if (isActive) {
+          splitToggle.textContent = "Splittaa eka pari";
+          splitToggle.style.backgroundColor = "lightgreen";
+          privilegedInput.value = 2;
+          privilegedInput.min = 2;
+        } else {
+          splitToggle.textContent = "Splittaa eka pari";
+          splitToggle.style.backgroundColor = "";
+          privilegedInput.value = 0;
+          privilegedInput.min = 0;
+        }
+      });
+
+      // Pre-draw the results during registration.
+      startButton.addEventListener('click', function(){
+        totalParticipants = parseInt(participantInput.value, 10) || 0;
+        privilegedCount = parseInt(privilegedInput.value, 10) || 0;
+        if(totalParticipants < 4) {
+          alert("Please enter at least 4 participants.");
+          return;
+        }
+        if(privilegedCount < 0 || privilegedCount > 3) {
+          alert("Privileged count must be between 0 and 3.");
+          return;
+        }
+        // If split toggle is active, force privilegedCount to be at least 2.
+        if(splitToggle.getAttribute('data-active') === 'true' && privilegedCount < 2) {
+          privilegedCount = 2;
+          privilegedInput.value = 2;
+        }
+        
+        // Pre-draw the results: start with all slots marked as excluded.
+        resultsArray = new Array(totalParticipants);
+        for (var i = 0; i < totalParticipants; i++) {
+          resultsArray[i] = excludedOutcome;
+        }
+        // Total winners is the lesser of 4 or totalParticipants.
+        var winnerCount = Math.min(4, totalParticipants);
+        
+        // Select privilegedCount slots randomly.
+        privilegedIndices = [];
+        if (privilegedCount > 0) {
+          var allIndices = [];
+          for (var i = 0; i < totalParticipants; i++) {
+            allIndices.push(i);
+          }
+          shuffle(allIndices);
+          privilegedIndices = allIndices.slice(0, privilegedCount);
+        }
+        
+        // The remaining winners (non-privileged) needed.
+        var remainingWinners = winnerCount - privilegedCount;
+        // Create an array of indices not designated as privileged.
+        var nonPrivilegedIndices = [];
+        for (var i = 0; i < totalParticipants; i++) {
+          if (privilegedIndices.indexOf(i) === -1) {
+            nonPrivilegedIndices.push(i);
+          }
+        }
+        shuffle(nonPrivilegedIndices);
+        var additionalWinners = nonPrivilegedIndices.slice(0, remainingWinners);
+        
+        // Combine privileged winners and additional winners.
+        var winnerIndices = privilegedIndices.concat(additionalWinners);
+        
+        // Shuffle outcomes.
+        var assignedOutcomes = shuffle(outcomes.slice());
+        // Assign outcomes to winners.
+        for (var j = 0; j < winnerIndices.length; j++) {
+          resultsArray[winnerIndices[j]] = assignedOutcomes[j];
+        }
+        
+        // Initialize availableIndices with all participant slots.
+        availableIndices = [];
+        for(var i = 0; i < totalParticipants; i++) {
+          availableIndices.push(i);
+        }
+        
+        registrationLayer.style.display = 'none';
+        participationLayer.style.display = 'flex';
+      });
+
+      // Participation click handler.
+      participationLayer.addEventListener('click', function(){
+        if(availableIndices.length === 0) {
+          return; // All slots claimed.
+        }
+        currentClick++;
+
+        // On the very first click, hide the overlay text and background.
+        if(currentClick === 1) {
+          participationText.style.display = 'none';
+          participationLayer.style.background = 'transparent';
+        }
+        
+        var chosenIndex;
+        var isPrivilegedSlot = false;
+        // If privileged players are defined and we haven't processed all privileged clicks,
+        // choose only from available slots that are privileged.
+        if(privilegedCount > 0 && currentClick <= privilegedCount) {
+          var availablePrivileged = availableIndices.filter(function(idx){
+            return privilegedIndices.indexOf(idx) !== -1;
+          });
+          if(availablePrivileged.length > 0) {
+            var randIdx = Math.floor(Math.random() * availablePrivileged.length);
+            chosenIndex = availablePrivileged[randIdx];
+            isPrivilegedSlot = true;
+          } else {
+            var randIdx = Math.floor(Math.random() * availableIndices.length);
+            chosenIndex = availableIndices[randIdx];
+          }
+        } else {
+          var randIdx = Math.floor(Math.random() * availableIndices.length);
+          chosenIndex = availableIndices[randIdx];
+        }
+        
+        // Remove chosenIndex from availableIndices.
+        var remIdx = availableIndices.indexOf(chosenIndex);
+        if(remIdx !== -1) {
+          availableIndices.splice(remIdx, 1);
+        }
+        
+        // Retrieve the pre-drawn outcome for that slot.
+        var outcome = resultsArray[chosenIndex];
+        
+        // If this is a privileged slot, process split logic.
+        if(isPrivilegedSlot) {
+          privilegedDrawCount++;
+          if(privilegedDrawCount === 1) {
+            // First privileged draw: record outcome.
+            firstPrivilegedOutcome = outcome;
+          } else if(privilegedDrawCount === 2) {
+            // Second privileged draw: if toggle is active and outcome color matches first privileged, override.
+            if(splitToggle.getAttribute('data-active') === 'true' && firstPrivilegedOutcome && (outcome.color === firstPrivilegedOutcome.color)) {
+              outcome = getOppositeOutcome(firstPrivilegedOutcome);
+            }
+          }
+        }
+        
+        // Create and display a card with the outcome.
+        var card = document.createElement('div');
+        card.className = 'card';
+        card.textContent = outcome.icon;
+        card.style.backgroundColor = outcome.color;
+        resultsLayer.appendChild(card);
+        
+        // Hide participation layer when all slots are claimed.
+        if(availableIndices.length === 0) {
+          participationLayer.style.display = 'none';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
